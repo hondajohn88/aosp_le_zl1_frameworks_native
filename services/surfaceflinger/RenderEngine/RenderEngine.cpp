@@ -83,6 +83,7 @@ RenderEngine* RenderEngine::create(EGLDisplay display, int hwcFormat) {
             EGL_CONTEXT_CLIENT_VERSION, contextClientVersion,      // MUST be first
 #ifdef EGL_IMG_context_priority
 #ifdef HAS_CONTEXT_PRIORITY
+#warning "using EGL_IMG_context_priority"
             EGL_CONTEXT_PRIORITY_LEVEL_IMG, EGL_CONTEXT_PRIORITY_HIGH_IMG,
 #endif
 #endif
@@ -147,7 +148,7 @@ RenderEngine* RenderEngine::create(EGLDisplay display, int hwcFormat) {
     return engine;
 }
 
-RenderEngine::RenderEngine() : mEGLContext(EGL_NO_CONTEXT) {
+RenderEngine::RenderEngine() : mEGLConfig(NULL), mEGLContext(EGL_NO_CONTEXT) {
 }
 
 RenderEngine::~RenderEngine() {
@@ -261,11 +262,9 @@ void RenderEngine::dump(String8& result) {
 // ---------------------------------------------------------------------------
 
 RenderEngine::BindImageAsFramebuffer::BindImageAsFramebuffer(
-        RenderEngine& engine, EGLImageKHR image, bool useReadPixels,
-        int reqWidth, int reqHeight) : mEngine(engine), mUseReadPixels(useReadPixels)
+        RenderEngine& engine, EGLImageKHR image) : mEngine(engine)
 {
-    mEngine.bindImageAsFramebuffer(image, &mTexName, &mFbName, &mStatus,
-            useReadPixels, reqWidth, reqHeight);
+    mEngine.bindImageAsFramebuffer(image, &mTexName, &mFbName, &mStatus);
 
     ALOGE_IF(mStatus != GL_FRAMEBUFFER_COMPLETE_OES,
             "glCheckFramebufferStatusOES error %d", mStatus);
@@ -273,7 +272,7 @@ RenderEngine::BindImageAsFramebuffer::BindImageAsFramebuffer(
 
 RenderEngine::BindImageAsFramebuffer::~BindImageAsFramebuffer() {
     // back to main framebuffer
-    mEngine.unbindFramebuffer(mTexName, mFbName, mUseReadPixels);
+    mEngine.unbindFramebuffer(mTexName, mFbName);
 }
 
 status_t RenderEngine::BindImageAsFramebuffer::getStatus() const {
@@ -317,7 +316,7 @@ class EGLAttributeVector {
     friend class Adder;
     KeyedVector<Attribute, EGLint> mList;
     struct Attribute {
-        Attribute() {};
+        Attribute() : v(0) {};
         Attribute(EGLint v) : v(v) { }
         EGLint v;
         bool operator < (const Attribute& other) const {
@@ -435,6 +434,13 @@ EGLConfig RenderEngine::chooseEglConfig(EGLDisplay display, int format) {
     ALOGI("EGLSurface: %d-%d-%d-%d, config=%p", r, g, b, a, config);
 
     return config;
+}
+
+
+void RenderEngine::primeCache() const {
+    // Getting the ProgramCache instance causes it to prime its shader cache,
+    // which is performed in its constructor
+    ProgramCache::getInstance();
 }
 
 // ---------------------------------------------------------------------------

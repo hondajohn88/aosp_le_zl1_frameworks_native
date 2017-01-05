@@ -42,9 +42,6 @@ class GLES20RenderEngine : public RenderEngine {
     GLint mMaxTextureSize;
     GLuint mVpWidth;
     GLuint mVpHeight;
-    Rect mProjectionSourceCrop;
-    bool mProjectionYSwap;
-    Transform::orientation_flags mProjectionRotation;
 
     struct Group {
         GLuint texture;
@@ -58,9 +55,8 @@ class GLES20RenderEngine : public RenderEngine {
     Vector<Group> mGroupStack;
 
     virtual void bindImageAsFramebuffer(EGLImageKHR image,
-            uint32_t* texName, uint32_t* fbName, uint32_t* status,
-            bool useReadPixels, int reqWidth, int reqHeight);
-    virtual void unbindFramebuffer(uint32_t texName, uint32_t fbName, bool useReadPixels);
+            uint32_t* texName, uint32_t* fbName, uint32_t* status);
+    virtual void unbindFramebuffer(uint32_t texName, uint32_t fbName);
 
 public:
     GLES20RenderEngine();
@@ -70,27 +66,28 @@ protected:
 
     virtual void dump(String8& result);
     virtual void setViewportAndProjection(size_t vpw, size_t vph,
-            Rect sourceCrop, size_t hwh, bool yswap, Transform::orientation_flags rotation);
-    virtual void setupLayerBlending(bool premultipliedAlpha, bool opaque, int alpha);
+            Rect sourceCrop, size_t hwh, bool yswap,
+            Transform::orientation_flags rotation);
+#ifdef USE_HWC2
+    virtual void setupLayerBlending(bool premultipliedAlpha, bool opaque,
+            float alpha) override;
+    virtual void setupDimLayerBlending(float alpha) override;
+#else
+    virtual void setupLayerBlending(bool premultipliedAlpha, bool opaque,
+            int alpha);
     virtual void setupDimLayerBlending(int alpha);
+#endif
     virtual void setupLayerTexturing(const Texture& texture);
     virtual void setupLayerBlackedOut();
     virtual void setupFillWithColor(float r, float g, float b, float a);
     virtual mat4 setupColorTransform(const mat4& colorTransform);
     virtual void disableTexturing();
     virtual void disableBlending();
-    virtual void setupLayerMasking(const Texture& maskTexture, float alphaThreshold);
-    virtual void disableLayerMasking();
 
     virtual void drawMesh(const Mesh& mesh);
 
     virtual size_t getMaxTextureSize() const;
     virtual size_t getMaxViewportDims() const;
-    virtual bool getProjectionYSwap() { return mProjectionYSwap; }
-    virtual size_t getViewportWidth() const { return mVpWidth; }
-    virtual size_t getViewportHeight() const { return mVpHeight; }
-    virtual Rect getProjectionSourceCrop() const { return mProjectionSourceCrop; }
-    virtual Transform::orientation_flags getProjectionRotation() const { return mProjectionRotation; }
 };
 
 // ---------------------------------------------------------------------------

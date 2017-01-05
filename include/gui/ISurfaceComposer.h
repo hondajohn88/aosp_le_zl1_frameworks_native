@@ -39,6 +39,7 @@ class ComposerState;
 class DisplayState;
 struct DisplayInfo;
 struct DisplayStatInfo;
+class HdrCapabilities;
 class IDisplayEventConnection;
 class IMemoryHeap;
 class Rect;
@@ -59,10 +60,7 @@ public:
 
     enum {
         eDisplayIdMain = 0,
-        eDisplayIdHdmi = 1,
-#ifdef QTI_BSP
-        eDisplayIdTertiary = 2
-#endif
+        eDisplayIdHdmi = 1
     };
 
     enum Rotation {
@@ -139,6 +137,12 @@ public:
      * should be used */
     virtual status_t setActiveConfig(const sp<IBinder>& display, int id) = 0;
 
+    virtual status_t getDisplayColorModes(const sp<IBinder>& display,
+            Vector<android_color_mode_t>* outColorModes) = 0;
+    virtual android_color_mode_t getActiveColorMode(const sp<IBinder>& display) = 0;
+    virtual status_t setActiveColorMode(const sp<IBinder>& display,
+            android_color_mode_t colorMode) = 0;
+
     /* Capture the specified screen. requires READ_FRAME_BUFFER permission
      * This function will fail if there is a secure window on screen.
      */
@@ -147,8 +151,7 @@ public:
             Rect sourceCrop, uint32_t reqWidth, uint32_t reqHeight,
             uint32_t minLayerZ, uint32_t maxLayerZ,
             bool useIdentityTransform,
-            Rotation rotation = eRotateNone,
-            bool isCpuConsumer = false) = 0;
+            Rotation rotation = eRotateNone) = 0;
 
     /* Clears the frame statistics for animations.
      *
@@ -161,6 +164,13 @@ public:
      * Requires the ACCESS_SURFACE_FLINGER permission.
      */
     virtual status_t getAnimationFrameStats(FrameStats* outStats) const = 0;
+
+    /* Gets the supported HDR capabilities of the given display.
+     *
+     * Requires the ACCESS_SURFACE_FLINGER permission.
+     */
+    virtual status_t getHdrCapabilities(const sp<IBinder>& display,
+            HdrCapabilities* outCapabilities) const = 0;
 };
 
 // ----------------------------------------------------------------------------
@@ -188,6 +198,10 @@ public:
         GET_ANIMATION_FRAME_STATS,
         SET_POWER_MODE,
         GET_DISPLAY_STATS,
+        GET_HDR_CAPABILITIES,
+        GET_DISPLAY_COLOR_MODES,
+        GET_ACTIVE_COLOR_MODE,
+        SET_ACTIVE_COLOR_MODE,
     };
 
     virtual status_t onTransact(uint32_t code, const Parcel& data,

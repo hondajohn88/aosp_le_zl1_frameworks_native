@@ -50,7 +50,6 @@ public:
         eCursorWindow       = 0x00002000,
 
         eFXSurfaceNormal    = 0x00000000,
-        eFXSurfaceBlur      = 0x00010000,
         eFXSurfaceDim       = 0x00020000,
         eFXSurfaceMask      = 0x000F0000,
     };
@@ -78,6 +77,9 @@ public:
      * Requires ACCESS_SURFACE_FLINGER permission
      */
     virtual status_t getLayerFrameStats(const sp<IBinder>& handle, FrameStats* outStats) const = 0;
+
+    virtual status_t getTransformToDisplayInverse(const sp<IBinder>& handle,
+            bool* outTransformToDisplayInverse) const = 0;
 };
 
 // ----------------------------------------------------------------------------

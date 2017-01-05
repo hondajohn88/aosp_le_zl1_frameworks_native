@@ -36,6 +36,8 @@
 
 #include <private/gui/LayerState.h>
 
+#include <list>
+
 #include "FrameTracker.h"
 #include "Client.h"
 #include "MonitoredProducer.h"
@@ -57,7 +59,6 @@ class Colorizer;
 class DisplayDevice;
 class GraphicBuffer;
 class SurfaceFlinger;
-class LayerBlur;
 
 // ---------------------------------------------------------------------------
 
@@ -71,12 +72,7 @@ class LayerBlur;
 class Layer : public SurfaceFlingerConsumer::ContentsChangedListener {
     static int32_t sSequence;
 
-    friend class LayerBlur;
-
 public:
-#ifdef QTI_BSP
-    friend class ExLayer;
-#endif
     mutable bool contentDirty;
     // regions below are in window-manager space
     Region visibleRegion;
@@ -95,15 +91,14 @@ public:
     };
 
     struct Geometry {
-        float x;
-        float y;
         uint32_t w;
         uint32_t h;
-        bool isPositionPending;
-        Rect crop;
+        Transform transform;
+
         inline bool operator ==(const Geometry& rhs) const {
-            return (w == rhs.w && h == rhs.h && crop == rhs.crop && x == rhs.x && y == rhs.y
-                && isPositionPending == rhs.isPositionPending);
+            return (w == rhs.w && h == rhs.h) &&
+                    (transform.tx() == rhs.transform.tx()) &&
+                    (transform.ty() == rhs.transform.ty());
         }
         inline bool operator !=(const Geometry& rhs) const {
             return !operator ==(rhs);
@@ -115,12 +110,27 @@ public:
         Geometry requested;
         uint32_t z;
         uint32_t layerStack;
-        uint8_t blur;
+#ifdef USE_HWC2
+        float alpha;
+#else
         uint8_t alpha;
+#endif
         uint8_t flags;
+        uint8_t mask;
         uint8_t reserved[2];
         int32_t sequence; // changes when visible regions can change
-        Transform transform;
+        bool modified;
+
+        Rect crop;
+        Rect requestedCrop;
+
+        Rect finalCrop;
+
+        // If set, defers this state update until the Layer identified by handle
+        // receives a frame with the given frameNumber
+        wp<IBinder> handle;
+        uint64_t frameNumber;
+
         // the transparentRegion hint is a bit special, it's latched only
         // when we receive a buffer -- this is because it's "content"
         // dependent.
@@ -139,19 +149,22 @@ public:
     status_t setBuffers(uint32_t w, uint32_t h, PixelFormat format, uint32_t flags);
 
     // modify current state
-    bool setPosition(float x, float y);
+    bool setPosition(float x, float y, bool immediate);
     bool setLayer(uint32_t z);
-    bool setBlur(uint8_t blur);
-    virtual bool setBlurMaskLayer(sp<Layer>& /*maskLayer*/) { return false; }
-    virtual bool setBlurMaskSampling(int32_t /*sampling*/) { return false; }
-    virtual bool setBlurMaskAlphaThreshold(float /*alpha*/) { return false; }
     bool setSize(uint32_t w, uint32_t h);
+#ifdef USE_HWC2
+    bool setAlpha(float alpha);
+#else
     bool setAlpha(uint8_t alpha);
+#endif
     bool setMatrix(const layer_state_t::matrix22_t& matrix);
     bool setTransparentRegionHint(const Region& transparent);
     bool setFlags(uint8_t flags, uint8_t mask);
-    bool setCrop(const Rect& crop);
+    bool setCrop(const Rect& crop, bool immediate);
+    bool setFinalCrop(const Rect& crop);
     bool setLayerStack(uint32_t layerStack);
+    void deferTransactionUntil(const sp<IBinder>& handle, uint64_t frameNumber);
+    bool setOverrideScalingMode(int32_t overrideScalingMode);
 
     // If we have received a new buffer this frame, we will pass its surface
     // damage down to hardware composer. Otherwise, we must send a region with
@@ -162,19 +175,17 @@ public:
     uint32_t getTransactionFlags(uint32_t flags);
     uint32_t setTransactionFlags(uint32_t flags);
 
-#ifdef QTI_BSP
-    virtual void computeGeometry(const sp<const DisplayDevice>& hw, Mesh& mesh,
-            bool useIdentityTransform) const;
-#else
     void computeGeometry(const sp<const DisplayDevice>& hw, Mesh& mesh,
             bool useIdentityTransform) const;
-#endif
     Rect computeBounds(const Region& activeTransparentRegion) const;
     Rect computeBounds() const;
 
+    class Handle;
     sp<IBinder> getHandle();
     sp<IGraphicBufferProducer> getProducer() const;
     const String8& getName() const;
+
+    int32_t getSequence() const { return sequence; }
 
     // -----------------------------------------------------------------------
     // Virtuals
@@ -212,35 +223,51 @@ public:
      */
     virtual bool isFixedSize() const;
 
-    /*
-     * isBlurLayer - true if this is a LayerBlur instance
-     */
-    virtual bool isBlurLayer() const { return false; }
-
 protected:
     /*
      * onDraw - draws the surface.
      */
     virtual void onDraw(const sp<const DisplayDevice>& hw, const Region& clip,
-            bool useIdentityTransform);
+            bool useIdentityTransform) const;
 
 public:
     // -----------------------------------------------------------------------
 
+#ifdef USE_HWC2
+    void setGeometry(const sp<const DisplayDevice>& displayDevice);
+    void forceClientComposition(int32_t hwcId);
+    void setPerFrameData(const sp<const DisplayDevice>& displayDevice);
+
+    // callIntoHwc exists so we can update our local state and call
+    // acceptDisplayChanges without unnecessarily updating the device's state
+    void setCompositionType(int32_t hwcId, HWC2::Composition type,
+            bool callIntoHwc = true);
+    HWC2::Composition getCompositionType(int32_t hwcId) const;
+
+    void setClearClientTarget(int32_t hwcId, bool clear);
+    bool getClearClientTarget(int32_t hwcId) const;
+
+    void updateCursorPosition(const sp<const DisplayDevice>& hw);
+#else
     void setGeometry(const sp<const DisplayDevice>& hw,
             HWComposer::HWCLayerInterface& layer);
-    virtual void setPerFrameData(const sp<const DisplayDevice>& hw,
+    void setPerFrameData(const sp<const DisplayDevice>& hw,
             HWComposer::HWCLayerInterface& layer);
     void setAcquireFence(const sp<const DisplayDevice>& hw,
             HWComposer::HWCLayerInterface& layer);
 
     Rect getPosition(const sp<const DisplayDevice>& hw);
+#endif
 
     /*
      * called after page-flip
      */
+#ifdef USE_HWC2
+    void onLayerDisplayed(const sp<Fence>& releaseFence);
+#else
     void onLayerDisplayed(const sp<const DisplayDevice>& hw,
             HWComposer::HWCLayerInterface* layer);
+#endif
 
     bool shouldPresentNow(const DispSync& dispSync) const;
 
@@ -251,17 +278,23 @@ public:
     bool onPreComposition();
 
     /*
-     *  called after composition.
+     * called after composition.
+     * returns true if the layer latched a new buffer this frame.
      */
-    void onPostComposition();
+    bool onPostComposition();
+
+#ifdef USE_HWC2
+    // If a buffer was replaced this frame, release the former buffer
+    void releasePendingBuffer();
+#endif
 
     /*
      * draw - performs some global clipping optimizations
      * and calls onDraw().
      */
-    void draw(const sp<const DisplayDevice>& hw, const Region& clip);
-    void draw(const sp<const DisplayDevice>& hw, bool useIdentityTransform);
-    void draw(const sp<const DisplayDevice>& hw);
+    void draw(const sp<const DisplayDevice>& hw, const Region& clip) const;
+    void draw(const sp<const DisplayDevice>& hw, bool useIdentityTransform) const;
+    void draw(const sp<const DisplayDevice>& hw) const;
 
     /*
      * doTransaction - process the transaction. This is a good place to figure
@@ -308,22 +341,7 @@ public:
 
     // Updates the transform hint in our SurfaceFlingerConsumer to match
     // the current orientation of the display device.
-    void updateTransformHint(const sp<const DisplayDevice>& hw) ;
-
-    /* ------------------------------------------------------------------------
-     * Extensions
-     */
-    virtual bool isExtOnly() const { return false; }
-    virtual bool isIntOnly() const { return false; }
-    virtual bool isSecureDisplay() const { return false; }
-    virtual bool isYuvLayer() const { return false; }
-    virtual void setPosition(const sp<const DisplayDevice>& /*hw*/,
-                             HWComposer::HWCLayerInterface& /*layer*/,
-                             const State& /*state*/) { }
-    virtual void setAcquiredFenceIfBlit(int& /*fenceFd */,
-                       HWComposer::HWCLayerInterface& /*layer */) { }
-    virtual bool canAllowGPUForProtected() const { return false; }
-
+    void updateTransformHint(const sp<const DisplayDevice>& hw) const;
 
     /*
      * returns the rectangle that crops the content of the layer and scales it
@@ -334,8 +352,40 @@ public:
     /*
      * Returns if a frame is queued.
      */
-    bool hasQueuedFrame() const { return mQueuedFrames > 0 || mSidebandStreamChanged; }
+    bool hasQueuedFrame() const { return mQueuedFrames > 0 ||
+            mSidebandStreamChanged || mAutoRefresh; }
 
+#ifdef USE_HWC2
+    // -----------------------------------------------------------------------
+
+    bool hasHwcLayer(int32_t hwcId) {
+        if (mHwcLayers.count(hwcId) == 0) {
+            return false;
+        }
+        if (mHwcLayers[hwcId].layer->isAbandoned()) {
+            ALOGI("Erasing abandoned layer %s on %d", mName.string(), hwcId);
+            mHwcLayers.erase(hwcId);
+            return false;
+        }
+        return true;
+    }
+
+    std::shared_ptr<HWC2::Layer> getHwcLayer(int32_t hwcId) {
+        if (mHwcLayers.count(hwcId) == 0) {
+            return nullptr;
+        }
+        return mHwcLayers[hwcId].layer;
+    }
+
+    void setHwcLayer(int32_t hwcId, std::shared_ptr<HWC2::Layer>&& layer) {
+        if (layer) {
+            mHwcLayers[hwcId].layer = layer;
+        } else {
+            mHwcLayers.erase(hwcId);
+        }
+    }
+
+#endif
     // -----------------------------------------------------------------------
 
     void clearWithOpenGL(const sp<const DisplayDevice>& hw, const Region& clip) const;
@@ -352,10 +402,27 @@ public:
 
     /* always call base class first */
     void dump(String8& result, Colorizer& colorizer) const;
+#ifdef USE_HWC2
+    static void miniDumpHeader(String8& result);
+    void miniDump(String8& result, int32_t hwcId) const;
+#endif
     void dumpFrameStats(String8& result) const;
     void clearFrameStats();
     void logFrameStats();
     void getFrameStats(FrameStats* outStats) const;
+
+    void getFenceData(String8* outName, uint64_t* outFrameNumber,
+            bool* outIsGlesComposition, nsecs_t* outPostedTime,
+            sp<Fence>* outAcquireFence, sp<Fence>* outPrevReleaseFence) const;
+
+    std::vector<OccupancyTracker::Segment> getOccupancyHistory(bool forceFlush);
+
+    bool getFrameTimestamps(uint64_t frameNumber,
+            FrameTimestamps* outTimestamps) const {
+        return mFlinger->getFrameTimestamps(*this, frameNumber, outTimestamps);
+    }
+
+    bool getTransformToDisplayInverse() const;
 
 protected:
     // constant
@@ -376,7 +443,6 @@ protected:
         LayerCleaner(const sp<SurfaceFlinger>& flinger, const sp<Layer>& layer);
     };
 
-    Rect reduce(const Rect& win, const Region& exclude) const;
 
 private:
     // Interface implementation for SurfaceFlingerConsumer::ContentsChangedListener
@@ -384,7 +450,7 @@ private:
     virtual void onFrameReplaced(const BufferItem& item) override;
     virtual void onSidebandStreamChanged() override;
 
-    void commitTransaction();
+    void commitTransaction(const State& stateToCommit);
 
     // needsLinearFiltering - true if this surface's state requires filtering
     bool needsFiltering(const sp<const DisplayDevice>& hw) const;
@@ -397,17 +463,76 @@ private:
     // drawing
     void clearWithOpenGL(const sp<const DisplayDevice>& hw, const Region& clip,
             float r, float g, float b, float alpha) const;
-#ifdef QTI_BSP
-    virtual void drawWithOpenGL(const sp<const DisplayDevice>& hw, const Region& clip,
-            bool useIdentityTransform) const;
-#else
     void drawWithOpenGL(const sp<const DisplayDevice>& hw, const Region& clip,
             bool useIdentityTransform) const;
 
-#endif
     // Temporary - Used only for LEGACY camera mode.
     uint32_t getProducerStickyTransform() const;
 
+    // Loads the corresponding system property once per process
+    static bool latchUnsignaledBuffers();
+
+    // -----------------------------------------------------------------------
+
+    class SyncPoint
+    {
+    public:
+        SyncPoint(uint64_t frameNumber) : mFrameNumber(frameNumber),
+                mFrameIsAvailable(false), mTransactionIsApplied(false) {}
+
+        uint64_t getFrameNumber() const {
+            return mFrameNumber;
+        }
+
+        bool frameIsAvailable() const {
+            return mFrameIsAvailable;
+        }
+
+        void setFrameAvailable() {
+            mFrameIsAvailable = true;
+        }
+
+        bool transactionIsApplied() const {
+            return mTransactionIsApplied;
+        }
+
+        void setTransactionApplied() {
+            mTransactionIsApplied = true;
+        }
+
+    private:
+        const uint64_t mFrameNumber;
+        std::atomic<bool> mFrameIsAvailable;
+        std::atomic<bool> mTransactionIsApplied;
+    };
+
+    // SyncPoints which will be signaled when the correct frame is at the head
+    // of the queue and dropped after the frame has been latched. Protected by
+    // mLocalSyncPointMutex.
+    Mutex mLocalSyncPointMutex;
+    std::list<std::shared_ptr<SyncPoint>> mLocalSyncPoints;
+
+    // SyncPoints which will be signaled and then dropped when the transaction
+    // is applied
+    std::list<std::shared_ptr<SyncPoint>> mRemoteSyncPoints;
+
+    uint64_t getHeadFrameNumber() const;
+    bool headFenceHasSignaled() const;
+
+    // Returns false if the relevant frame has already been latched
+    bool addSyncPoint(const std::shared_ptr<SyncPoint>& point);
+
+    void pushPendingState();
+    void popPendingState(State* stateToCommit);
+    bool applyPendingStates(State* stateToCommit);
+
+    // Returns mCurrentScaling mode (originating from the
+    // Client) or mOverrideScalingMode mode (originating from
+    // the Surface Controller) if set.
+    uint32_t getEffectiveScalingMode() const;
+public:
+    void notifyAvailableFrames();
+private:
 
     // -----------------------------------------------------------------------
 
@@ -424,6 +549,10 @@ private:
     State mDrawingState;
     volatile int32_t mTransactionFlags;
 
+    // Accessed from main thread and binder threads
+    Mutex mPendingStateMutex;
+    Vector<State> mPendingStates;
+
     // thread-safe
     volatile int32_t mQueuedFrames;
     volatile int32_t mSidebandStreamChanged; // used like an atomic boolean
@@ -435,7 +564,10 @@ private:
     Rect mCurrentCrop;
     uint32_t mCurrentTransform;
     uint32_t mCurrentScalingMode;
+    // We encode unset as -1.
+    int32_t mOverrideScalingMode;
     bool mCurrentOpacity;
+    std::atomic<uint64_t> mCurrentFrameNumber;
     bool mRefreshPending;
     bool mFrameLatencyNeeded;
     // Whether filtering is forced on or not
@@ -446,6 +578,27 @@ private:
     mutable Mesh mMesh;
     // The texture used to draw the layer in GLES composition mode
     mutable Texture mTexture;
+
+#ifdef USE_HWC2
+    // HWC items, accessed from the main thread
+    struct HWCInfo {
+        HWCInfo()
+          : layer(),
+            forceClientComposition(false),
+            compositionType(HWC2::Composition::Invalid),
+            clearClientTarget(false) {}
+
+        std::shared_ptr<HWC2::Layer> layer;
+        bool forceClientComposition;
+        HWC2::Composition compositionType;
+        bool clearClientTarget;
+        Rect displayFrame;
+        FloatRect sourceCrop;
+    };
+    std::unordered_map<int32_t, HWCInfo> mHwcLayers;
+#else
+    bool mIsGlesComposition;
+#endif
 
     // page-flip thread (currently main thread)
     bool mProtectedByApp; // application requires protected path to external sink
@@ -463,9 +616,11 @@ private:
     mutable Mutex mQueueItemLock;
     Condition mQueueItemCondition;
     Vector<BufferItem> mQueueItems;
-    uint64_t mLastFrameNumberReceived;
+    std::atomic<uint64_t> mLastFrameNumberReceived;
     bool mUpdateTexImageFailed; // This is only modified from the main thread
-    uint32_t mTransformHint;
+
+    bool mAutoRefresh;
+    bool mFreezePositionUpdates;
 };
 
 // ---------------------------------------------------------------------------

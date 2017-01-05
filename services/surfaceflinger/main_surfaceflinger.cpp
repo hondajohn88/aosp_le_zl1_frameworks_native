@@ -16,17 +16,20 @@
 
 #include <sys/resource.h>
 
+#include <sched.h>
+
 #include <cutils/sched_policy.h>
 #include <binder/IServiceManager.h>
 #include <binder/IPCThreadState.h>
 #include <binder/ProcessState.h>
 #include <binder/IServiceManager.h>
+#include "GpuService.h"
 #include "SurfaceFlinger.h"
-#include "DisplayUtils.h"
 
 using namespace android;
 
 int main(int, char**) {
+    signal(SIGPIPE, SIG_IGN);
     // When SF is launched in its own process, limit the number of
     // binder threads to 4.
     ProcessState::self()->setThreadPoolMaxThreadCount(4);
@@ -36,11 +39,9 @@ int main(int, char**) {
     ps->startThreadPool();
 
     // instantiate surfaceflinger
-    sp<SurfaceFlinger> flinger = DisplayUtils::getInstance()->getSFInstance();
+    sp<SurfaceFlinger> flinger = new SurfaceFlinger();
 
-    setpriority(PRIO_PROCESS, 0, PRIORITY_URGENT_DISPLAY);
-
-    set_sched_policy(0, SP_FOREGROUND);
+    setpriority(PRIO_PROCESS, 0, PRIORITY_REALTIME);
 
 #ifdef ENABLE_CPUSETS
     // Put most SurfaceFlinger threads in the system-background cpuset
@@ -56,7 +57,17 @@ int main(int, char**) {
     sp<IServiceManager> sm(defaultServiceManager());
     sm->addService(String16(SurfaceFlinger::getServiceName()), flinger, false);
 
-    // run in this thread
+    // publish GpuService
+    sp<GpuService> gpuservice = new GpuService();
+    sm->addService(String16(GpuService::SERVICE_NAME), gpuservice, false);
+
+    struct sched_param param = {0};
+    param.sched_priority = 4;
+    if (sched_setscheduler(0, SCHED_RR, &param) != 0) {
+        ALOGE("Couldn't set SCHED_RR");
+    }
+
+    // run surface flinger in this thread
     flinger->run();
 
     return 0;

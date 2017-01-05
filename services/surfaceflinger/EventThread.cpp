@@ -20,7 +20,6 @@
 #include <sys/types.h>
 
 #include <cutils/compiler.h>
-#include <cutils/iosched_policy.h>
 
 #include <gui/BitTube.h>
 #include <gui/IDisplayEventConnection.h>
@@ -45,8 +44,9 @@ static void vsyncOffCallback(union sigval val) {
     return;
 }
 
-EventThread::EventThread(const sp<VSyncSource>& src)
+EventThread::EventThread(const sp<VSyncSource>& src, SurfaceFlinger& flinger)
     : mVSyncSource(src),
+      mFlinger(flinger),
       mUseSoftwareVSync(false),
       mVsyncEnabled(false),
       mDebugVsyncEnabled(false),
@@ -91,8 +91,7 @@ void EventThread::sendVsyncHintOnLocked() {
 }
 
 void EventThread::onFirstRef() {
-    run("EventThread", PRIORITY_URGENT_DISPLAY + PRIORITY_MORE_FAVORABLE);
-    android_set_rt_ioprio(getTid(), 1);
+    run("EventThread", PRIORITY_REALTIME);
 }
 
 sp<EventThread::Connection> EventThread::createEventConnection() const {
@@ -128,6 +127,9 @@ void EventThread::setVsyncRate(uint32_t count,
 void EventThread::requestNextVsync(
         const sp<EventThread::Connection>& connection) {
     Mutex::Autolock _l(mLock);
+
+    mFlinger.resyncWithRateLimit();
+
     if (connection->count < 0) {
         connection->count = 0;
         mCondition.broadcast();

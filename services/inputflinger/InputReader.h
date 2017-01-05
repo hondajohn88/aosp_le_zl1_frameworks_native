@@ -145,10 +145,7 @@ struct InputReaderConfiguration {
         CHANGE_EXTERNAL_STYLUS_PRESENCE = 1 << 7,
 
         // Volume keys rotation option changed.
-        CHANGE_VOLUME_KEYS_ROTATION = 1 << 8,
-
-        // Stylus icon option changed.
-        CHANGE_STYLUS_ICON_ENABLED = 1 << 9,
+        CHANGE_VOLUME_KEYS_ROTATION = 1 << 7,
 
         // All devices must be reopened.
         CHANGE_MUST_REOPEN = 1 << 31,
@@ -237,12 +234,6 @@ struct InputReaderConfiguration {
     // True to show the location of touches on the touch screen as spots.
     bool showTouches;
 
-    // True to show the pointer icon when a stylus is used.
-    bool stylusIconEnabled;
-
-    // Ignore finger touches this long after the stylus has been used (including hover)
-    nsecs_t stylusPalmRejectionTime;
-
     // Remap volume keys according to display rotation
     // 0 - disabled, 1 - phone or hybrid rotation mode, 2 - tablet rotation mode
     int volumeKeysRotationMode;
@@ -264,10 +255,7 @@ struct InputReaderConfiguration {
             pointerGestureMovementSpeedRatio(0.8f),
             pointerGestureZoomSpeedRatio(0.3f),
             showTouches(false),
-            stylusIconEnabled(false),
-            stylusPalmRejectionTime(50 * 10000000LL), // 50 ms
-            volumeKeysRotationMode(0)
-    { }
+            volumeKeysRotationMode(0) { }
 
     bool getDisplayInfo(bool external, DisplayViewport* outViewport) const;
     void setDisplayInfo(bool external, const DisplayViewport& viewport);
@@ -379,6 +367,9 @@ public:
     virtual int32_t getSwitchState(int32_t deviceId, uint32_t sourceMask,
             int32_t sw) = 0;
 
+    /* Toggle Caps Lock */
+    virtual void toggleCapsLockState(int32_t deviceId) = 0;
+
     /* Determine whether physical keys exist for the given framework-domain key codes. */
     virtual bool hasKeys(int32_t deviceId, uint32_t sourceMask,
             size_t numCodes, const int32_t* keyCodes, uint8_t* outFlags) = 0;
@@ -480,6 +471,8 @@ public:
             int32_t keyCode);
     virtual int32_t getSwitchState(int32_t deviceId, uint32_t sourceMask,
             int32_t sw);
+
+    virtual void toggleCapsLockState(int32_t deviceId);
 
     virtual bool hasKeys(int32_t deviceId, uint32_t sourceMask,
             size_t numCodes, const int32_t* keyCodes, uint8_t* outFlags);
@@ -636,6 +629,7 @@ public:
     void cancelTouch(nsecs_t when);
 
     int32_t getMetaState();
+    void updateMetaState(int32_t keyCode);
 
     void fadePointer();
 
@@ -1051,6 +1045,7 @@ public:
     virtual void cancelTouch(nsecs_t when);
 
     virtual int32_t getMetaState();
+    virtual void updateMetaState(int32_t keyCode);
 
     virtual void updateExternalStylusState(const StylusState& state);
 
@@ -1136,6 +1131,7 @@ public:
             const int32_t* keyCodes, uint8_t* outFlags);
 
     virtual int32_t getMetaState();
+    virtual void updateMetaState(int32_t keyCode);
 
 private:
     struct KeyDown {
@@ -1176,6 +1172,8 @@ private:
     bool isKeyboardOrGamepadKey(int32_t scanCode);
 
     void processKey(nsecs_t when, bool down, int32_t scanCode, int32_t usageCode);
+
+    bool updateMetaStateIfNeeded(int32_t keyCode, bool down);
 
     ssize_t findKeyDown(int32_t scanCode);
 
@@ -1252,6 +1250,27 @@ private:
 };
 
 
+class RotaryEncoderInputMapper : public InputMapper {
+public:
+    RotaryEncoderInputMapper(InputDevice* device);
+    virtual ~RotaryEncoderInputMapper();
+
+    virtual uint32_t getSources();
+    virtual void populateDeviceInfo(InputDeviceInfo* deviceInfo);
+    virtual void dump(String8& dump);
+    virtual void configure(nsecs_t when, const InputReaderConfiguration* config, uint32_t changes);
+    virtual void reset(nsecs_t when);
+    virtual void process(const RawEvent* rawEvent);
+
+private:
+    CursorScrollAccumulator mRotaryEncoderScrollAccumulator;
+
+    int32_t mSource;
+    float mScalingFactor;
+
+    void sync(nsecs_t when);
+};
+
 class TouchInputMapper : public InputMapper {
 public:
     TouchInputMapper(InputDevice* device);
@@ -1316,7 +1335,6 @@ protected:
             DEVICE_TYPE_TOUCH_SCREEN,
             DEVICE_TYPE_TOUCH_PAD,
             DEVICE_TYPE_TOUCH_NAVIGATION,
-            DEVICE_TYPE_GESTURE_SENSOR,
             DEVICE_TYPE_POINTER,
         };
 
@@ -1327,8 +1345,8 @@ protected:
         bool hasButtonUnderPad;
 
         enum GestureMode {
-            GESTURE_MODE_POINTER,
-            GESTURE_MODE_SPOTS,
+            GESTURE_MODE_SINGLE_TOUCH,
+            GESTURE_MODE_MULTI_TOUCH,
         };
         GestureMode gestureMode;
 
@@ -1807,9 +1825,6 @@ private:
     VelocityControl mPointerVelocityControl;
     VelocityControl mWheelXVelocityControl;
     VelocityControl mWheelYVelocityControl;
-    
-    // The time the stylus event was processed by any TouchInputMapper
-    static nsecs_t mLastStylusTime;
 
     void resetExternalStylus();
     void clearStylusDataPendingFlags();
@@ -1876,10 +1891,6 @@ private:
     const VirtualKey* findVirtualKeyHit(int32_t x, int32_t y);
 
     static void assignPointerIds(const RawState* last, RawState* current);
-    
-    void unfadePointer(PointerControllerInterface::Transition transition);
-
-    bool rejectPalm(nsecs_t when);
 };
 
 

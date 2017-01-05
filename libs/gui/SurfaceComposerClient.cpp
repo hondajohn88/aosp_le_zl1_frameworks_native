@@ -29,6 +29,8 @@
 #include <binder/IMemory.h>
 #include <binder/IServiceManager.h>
 
+#include <system/graphics.h>
+
 #include <ui/DisplayInfo.h>
 
 #include <gui/CpuConsumer.h>
@@ -144,14 +146,6 @@ public:
             uint32_t w, uint32_t h);
     status_t setLayer(const sp<SurfaceComposerClient>& client, const sp<IBinder>& id,
             uint32_t z);
-    status_t setBlur(const sp<SurfaceComposerClient>& client, const sp<IBinder>& id,
-            float blur);
-    status_t setBlurMaskSurface(const sp<SurfaceComposerClient>& client, const sp<IBinder>& id,
-            const sp<IBinder>& maskSurfaceId);
-    status_t setBlurMaskSampling(const sp<SurfaceComposerClient>& client, const sp<IBinder>& id,
-            uint32_t blurMaskSampling);
-    status_t setBlurMaskAlphaThreshold(const sp<SurfaceComposerClient>& client, const sp<IBinder>& id,
-            float alpha);
     status_t setFlags(const sp<SurfaceComposerClient>& client, const sp<IBinder>& id,
             uint32_t flags, uint32_t mask);
     status_t setTransparentRegionHint(
@@ -164,11 +158,20 @@ public:
     status_t setOrientation(int orientation);
     status_t setCrop(const sp<SurfaceComposerClient>& client, const sp<IBinder>& id,
             const Rect& crop);
+    status_t setFinalCrop(const sp<SurfaceComposerClient>& client,
+            const sp<IBinder>& id, const Rect& crop);
     status_t setLayerStack(const sp<SurfaceComposerClient>& client,
             const sp<IBinder>& id, uint32_t layerStack);
+    status_t deferTransactionUntil(const sp<SurfaceComposerClient>& client,
+            const sp<IBinder>& id, const sp<IBinder>& handle,
+            uint64_t frameNumber);
+    status_t setOverrideScalingMode(const sp<SurfaceComposerClient>& client,
+            const sp<IBinder>& id, int32_t overrideScalingMode);
+    status_t setGeometryAppliesWithResize(const sp<SurfaceComposerClient>& client,
+            const sp<IBinder>& id);
 
-    void setDisplaySurface(const sp<IBinder>& token,
-            const sp<IGraphicBufferProducer>& bufferProducer);
+    status_t setDisplaySurface(const sp<IBinder>& token,
+            sp<IGraphicBufferProducer> bufferProducer);
     void setDisplayLayerStack(const sp<IBinder>& token, uint32_t layerStack);
     void setDisplayProjection(const sp<IBinder>& token,
             uint32_t orientation,
@@ -311,50 +314,6 @@ status_t Composer::setLayer(const sp<SurfaceComposerClient>& client,
     return NO_ERROR;
 }
 
-status_t Composer::setBlur(const sp<SurfaceComposerClient>& client,
-        const sp<IBinder>& id, float blur) {
-    Mutex::Autolock _l(mLock);
-    layer_state_t* s = getLayerStateLocked(client, id);
-    if (!s)
-        return BAD_INDEX;
-    s->what |= layer_state_t::eBlurChanged;
-    s->blur = blur;
-    return NO_ERROR;
-}
-
-status_t Composer::setBlurMaskSurface(const sp<SurfaceComposerClient>& client,
-        const sp<IBinder>& id, const sp<IBinder>& maskSurfaceId) {
-    Mutex::Autolock _l(mLock);
-    layer_state_t* s = getLayerStateLocked(client, id);
-    if (!s)
-        return BAD_INDEX;
-    s->what |= layer_state_t::eBlurMaskSurfaceChanged;
-    s->blurMaskSurface = maskSurfaceId;
-    return NO_ERROR;
-}
-
-status_t Composer::setBlurMaskSampling(const sp<SurfaceComposerClient>& client,
-        const sp<IBinder>& id, uint32_t blurMaskSampling) {
-    Mutex::Autolock _l(mLock);
-    layer_state_t* s = getLayerStateLocked(client, id);
-    if (!s)
-        return BAD_INDEX;
-    s->what |= layer_state_t::eBlurMaskSamplingChanged;
-    s->blurMaskSampling = blurMaskSampling;
-    return NO_ERROR;
-}
-
-status_t Composer::setBlurMaskAlphaThreshold(const sp<SurfaceComposerClient>& client,
-        const sp<IBinder>& id, float alpha) {
-    Mutex::Autolock _l(mLock);
-    layer_state_t* s = getLayerStateLocked(client, id);
-    if (!s)
-        return BAD_INDEX;
-    s->what |= layer_state_t::eBlurMaskAlphaThresholdChanged;
-    s->blurMaskAlphaThreshold = alpha;
-    return NO_ERROR;
-}
-
 status_t Composer::setFlags(const sp<SurfaceComposerClient>& client,
         const sp<IBinder>& id, uint32_t flags,
         uint32_t mask) {
@@ -362,9 +321,9 @@ status_t Composer::setFlags(const sp<SurfaceComposerClient>& client,
     layer_state_t* s = getLayerStateLocked(client, id);
     if (!s)
         return BAD_INDEX;
-    if (mask & layer_state_t::eLayerOpaque ||
-            mask & layer_state_t::eLayerHidden ||
-            mask & layer_state_t::eLayerSecure) {
+    if ((mask & layer_state_t::eLayerOpaque) ||
+            (mask & layer_state_t::eLayerHidden) ||
+            (mask & layer_state_t::eLayerSecure)) {
         s->what |= layer_state_t::eFlagsChanged;
     }
     s->flags &= ~mask;
@@ -435,6 +394,71 @@ status_t Composer::setCrop(const sp<SurfaceComposerClient>& client,
     return NO_ERROR;
 }
 
+status_t Composer::setFinalCrop(const sp<SurfaceComposerClient>& client,
+        const sp<IBinder>& id, const Rect& crop) {
+    Mutex::Autolock _l(mLock);
+    layer_state_t* s = getLayerStateLocked(client, id);
+    if (!s) {
+        return BAD_INDEX;
+    }
+    s->what |= layer_state_t::eFinalCropChanged;
+    s->finalCrop = crop;
+    return NO_ERROR;
+}
+
+status_t Composer::deferTransactionUntil(
+        const sp<SurfaceComposerClient>& client, const sp<IBinder>& id,
+        const sp<IBinder>& handle, uint64_t frameNumber) {
+    Mutex::Autolock lock(mLock);
+    layer_state_t* s = getLayerStateLocked(client, id);
+    if (!s) {
+        return BAD_INDEX;
+    }
+    s->what |= layer_state_t::eDeferTransaction;
+    s->handle = handle;
+    s->frameNumber = frameNumber;
+    return NO_ERROR;
+}
+
+status_t Composer::setOverrideScalingMode(
+        const sp<SurfaceComposerClient>& client,
+        const sp<IBinder>& id, int32_t overrideScalingMode) {
+    Mutex::Autolock lock(mLock);
+    layer_state_t* s = getLayerStateLocked(client, id);
+    if (!s) {
+        return BAD_INDEX;
+    }
+
+    switch (overrideScalingMode) {
+        case NATIVE_WINDOW_SCALING_MODE_FREEZE:
+        case NATIVE_WINDOW_SCALING_MODE_SCALE_TO_WINDOW:
+        case NATIVE_WINDOW_SCALING_MODE_SCALE_CROP:
+        case NATIVE_WINDOW_SCALING_MODE_NO_SCALE_CROP:
+        case -1:
+            break;
+        default:
+            ALOGE("unknown scaling mode: %d",
+                    overrideScalingMode);
+            return BAD_VALUE;
+    }
+
+    s->what |= layer_state_t::eOverrideScalingModeChanged;
+    s->overrideScalingMode = overrideScalingMode;
+    return NO_ERROR;
+}
+
+status_t Composer::setGeometryAppliesWithResize(
+        const sp<SurfaceComposerClient>& client,
+        const sp<IBinder>& id) {
+    Mutex::Autolock lock(mLock);
+    layer_state_t* s = getLayerStateLocked(client, id);
+    if (!s) {
+        return BAD_INDEX;
+    }
+    s->what |= layer_state_t::eGeometryAppliesWithResize;
+    return NO_ERROR;
+}
+
 // ---------------------------------------------------------------------------
 
 DisplayState& Composer::getDisplayStateLocked(const sp<IBinder>& token) {
@@ -449,12 +473,24 @@ DisplayState& Composer::getDisplayStateLocked(const sp<IBinder>& token) {
     return mDisplayStates.editItemAt(static_cast<size_t>(index));
 }
 
-void Composer::setDisplaySurface(const sp<IBinder>& token,
-        const sp<IGraphicBufferProducer>& bufferProducer) {
+status_t Composer::setDisplaySurface(const sp<IBinder>& token,
+        sp<IGraphicBufferProducer> bufferProducer) {
+    if (bufferProducer.get() != nullptr) {
+        // Make sure that composition can never be stalled by a virtual display
+        // consumer that isn't processing buffers fast enough.
+        status_t err = bufferProducer->setAsyncMode(true);
+        if (err != NO_ERROR) {
+            ALOGE("Composer::setDisplaySurface Failed to enable async mode on the "
+                    "BufferQueue. This BufferQueue cannot be used for virtual "
+                    "display. (%d)", err);
+            return err;
+        }
+    }
     Mutex::Autolock _l(mLock);
     DisplayState& s(getDisplayStateLocked(token));
     s.surface = bufferProducer;
     s.what |= DisplayState::eSurfaceChanged;
+    return NO_ERROR;
 }
 
 void Composer::setDisplayLayerStack(const sp<IBinder>& token,
@@ -590,6 +626,14 @@ status_t SurfaceComposerClient::getLayerFrameStats(const sp<IBinder>& token,
     return mClient->getLayerFrameStats(token, outStats);
 }
 
+status_t SurfaceComposerClient::getTransformToDisplayInverse(const sp<IBinder>& token,
+        bool* outTransformToDisplayInverse) const {
+    if (mStatus != NO_ERROR) {
+        return mStatus;
+    }
+    return mClient->getTransformToDisplayInverse(token, outTransformToDisplayInverse);
+}
+
 inline Composer& SurfaceComposerClient::getComposer() {
     return mComposer;
 }
@@ -614,6 +658,11 @@ status_t SurfaceComposerClient::setCrop(const sp<IBinder>& id, const Rect& crop)
     return getComposer().setCrop(this, id, crop);
 }
 
+status_t SurfaceComposerClient::setFinalCrop(const sp<IBinder>& id,
+        const Rect& crop) {
+    return getComposer().setFinalCrop(this, id, crop);
+}
+
 status_t SurfaceComposerClient::setPosition(const sp<IBinder>& id, float x, float y) {
     return getComposer().setPosition(this, id, x, y);
 }
@@ -624,22 +673,6 @@ status_t SurfaceComposerClient::setSize(const sp<IBinder>& id, uint32_t w, uint3
 
 status_t SurfaceComposerClient::setLayer(const sp<IBinder>& id, uint32_t z) {
     return getComposer().setLayer(this, id, z);
-}
-
-status_t SurfaceComposerClient::setBlur(const sp<IBinder>& id, float blur) {
-    return getComposer().setBlur(this, id, blur);
-}
-
-status_t SurfaceComposerClient::setBlurMaskSurface(const sp<IBinder>& id, const sp<IBinder>& maskSurfaceId) {
-    return getComposer().setBlurMaskSurface(this, id, maskSurfaceId);
-}
-
-status_t SurfaceComposerClient::setBlurMaskSampling(const sp<IBinder>& id, uint32_t blurMaskSampling) {
-    return getComposer().setBlurMaskSampling(this, id, blurMaskSampling);
-}
-
-status_t SurfaceComposerClient::setBlurMaskAlphaThreshold(const sp<IBinder>& id, float alpha) {
-    return getComposer().setBlurMaskAlphaThreshold(this, id, alpha);
 }
 
 status_t SurfaceComposerClient::hide(const sp<IBinder>& id) {
@@ -677,11 +710,27 @@ status_t SurfaceComposerClient::setMatrix(const sp<IBinder>& id, float dsdx, flo
     return getComposer().setMatrix(this, id, dsdx, dtdx, dsdy, dtdy);
 }
 
+status_t SurfaceComposerClient::deferTransactionUntil(const sp<IBinder>& id,
+        const sp<IBinder>& handle, uint64_t frameNumber) {
+    return getComposer().deferTransactionUntil(this, id, handle, frameNumber);
+}
+
+status_t SurfaceComposerClient::setOverrideScalingMode(
+        const sp<IBinder>& id, int32_t overrideScalingMode) {
+    return getComposer().setOverrideScalingMode(
+            this, id, overrideScalingMode);
+}
+
+status_t SurfaceComposerClient::setGeometryAppliesWithResize(
+        const sp<IBinder>& id) {
+    return getComposer().setGeometryAppliesWithResize(this, id);
+}
+
 // ----------------------------------------------------------------------------
 
-void SurfaceComposerClient::setDisplaySurface(const sp<IBinder>& token,
-        const sp<IGraphicBufferProducer>& bufferProducer) {
-    Composer::getInstance().setDisplaySurface(token, bufferProducer);
+status_t SurfaceComposerClient::setDisplaySurface(const sp<IBinder>& token,
+        sp<IGraphicBufferProducer> bufferProducer) {
+    return Composer::getInstance().setDisplaySurface(token, bufferProducer);
 }
 
 void SurfaceComposerClient::setDisplayLayerStack(const sp<IBinder>& token,
@@ -736,6 +785,20 @@ status_t SurfaceComposerClient::setActiveConfig(const sp<IBinder>& display, int 
     return ComposerService::getComposerService()->setActiveConfig(display, id);
 }
 
+status_t SurfaceComposerClient::getDisplayColorModes(const sp<IBinder>& display,
+        Vector<android_color_mode_t>* outColorModes) {
+    return ComposerService::getComposerService()->getDisplayColorModes(display, outColorModes);
+}
+
+android_color_mode_t SurfaceComposerClient::getActiveColorMode(const sp<IBinder>& display) {
+    return ComposerService::getComposerService()->getActiveColorMode(display);
+}
+
+status_t SurfaceComposerClient::setActiveColorMode(const sp<IBinder>& display,
+        android_color_mode_t colorMode) {
+    return ComposerService::getComposerService()->setActiveColorMode(display, colorMode);
+}
+
 void SurfaceComposerClient::setDisplayPowerMode(const sp<IBinder>& token,
         int mode) {
     ComposerService::getComposerService()->setPowerMode(token, mode);
@@ -749,13 +812,13 @@ status_t SurfaceComposerClient::getAnimationFrameStats(FrameStats* outStats) {
     return ComposerService::getComposerService()->getAnimationFrameStats(outStats);
 }
 
-// ----------------------------------------------------------------------------
+status_t SurfaceComposerClient::getHdrCapabilities(const sp<IBinder>& display,
+        HdrCapabilities* outCapabilities) {
+    return ComposerService::getComposerService()->getHdrCapabilities(display,
+            outCapabilities);
+}
 
-#ifndef FORCE_SCREENSHOT_CPU_PATH
-#define SS_CPU_CONSUMER false
-#else
-#define SS_CPU_CONSUMER true
-#endif
+// ----------------------------------------------------------------------------
 
 status_t ScreenshotClient::capture(
         const sp<IBinder>& display,
@@ -765,8 +828,7 @@ status_t ScreenshotClient::capture(
     sp<ISurfaceComposer> s(ComposerService::getComposerService());
     if (s == NULL) return NO_INIT;
     return s->captureScreen(display, producer, sourceCrop,
-            reqWidth, reqHeight, minLayerZ, maxLayerZ, useIdentityTransform,
-            ISurfaceComposer::eRotateNone, SS_CPU_CONSUMER);
+            reqWidth, reqHeight, minLayerZ, maxLayerZ, useIdentityTransform);
 }
 
 ScreenshotClient::ScreenshotClient()
@@ -804,7 +866,7 @@ status_t ScreenshotClient::update(const sp<IBinder>& display,
 
     status_t err = s->captureScreen(display, mProducer, sourceCrop,
             reqWidth, reqHeight, minLayerZ, maxLayerZ, useIdentityTransform,
-            static_cast<ISurfaceComposer::Rotation>(rotation), true);
+            static_cast<ISurfaceComposer::Rotation>(rotation));
 
     if (err == NO_ERROR) {
         err = mCpuConsumer->lockNextBuffer(&mBuffer);

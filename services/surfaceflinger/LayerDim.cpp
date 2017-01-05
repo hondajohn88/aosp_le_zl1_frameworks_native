@@ -14,6 +14,10 @@
  * limitations under the License.
  */
 
+// #define LOG_NDEBUG 0
+#undef LOG_TAG
+#define LOG_TAG "LayerDim"
+
 #include <stdlib.h>
 #include <stdint.h>
 #include <sys/types.h>
@@ -40,7 +44,7 @@ LayerDim::~LayerDim() {
 }
 
 void LayerDim::onDraw(const sp<const DisplayDevice>& hw,
-        const Region& /* clip */, bool useIdentityTransform)
+        const Region& /* clip */, bool useIdentityTransform) const
 {
     const State& s(getDrawingState());
     if (s.alpha>0) {
@@ -58,15 +62,6 @@ bool LayerDim::isVisible() const {
     return !(s.flags & layer_state_t::eLayerHidden) && s.alpha;
 }
 
-void LayerDim::setPerFrameData(const sp<const DisplayDevice>& hw,
-        HWComposer::HWCLayerInterface& layer) {
-  HWComposer& hwc = mFlinger->getHwComposer();
-
-  Layer::setPerFrameData(hw, layer);
-  if (hwc.hasDimComposition()) {
-    layer.setDim();
-  }
-}
 
 // ---------------------------------------------------------------------------
 

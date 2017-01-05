@@ -1,6 +1,5 @@
 /*
  * Copyright (C) 2013 The Android Open Source Project
- * Copyright (C) 2015 The CyanogenMod Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -59,12 +58,17 @@ struct BatteryProperties {
     bool chargerUsbOnline;
     bool chargerWirelessOnline;
     int maxChargingCurrent;
+    int maxChargingVoltage;
     int batteryStatus;
     int batteryHealth;
     bool batteryPresent;
     int batteryLevel;
     int batteryVoltage;
     int batteryTemperature;
+    int batteryCurrent;
+    int batteryCycleCount;
+    int batteryFullCharge;
+    int batteryChargeCounter;
     String8 batteryTechnology;
 
     status_t writeToParcel(Parcel* parcel) const;

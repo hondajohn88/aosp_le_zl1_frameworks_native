@@ -36,6 +36,8 @@ LOCAL_CPPFLAGS += -Wno-gnu-zero-variadic-macro-arguments
 # Don't warn about struct padding
 LOCAL_CPPFLAGS += -Wno-padded
 
+LOCAL_CPPFLAGS += -DDEBUG_ONLY_CODE=$(if $(filter userdebug eng,$(TARGET_BUILD_VARIANT)),1,0)
+
 LOCAL_SRC_FILES := \
 	IGraphicBufferConsumer.cpp \
 	IConsumerListener.cpp \
@@ -62,6 +64,7 @@ LOCAL_SRC_FILES := \
 	ISurfaceComposer.cpp \
 	ISurfaceComposerClient.cpp \
 	LayerState.cpp \
+	OccupancyTracker.cpp \
 	Sensor.cpp \
 	SensorEventQueue.cpp \
 	SensorManager.cpp \
@@ -89,10 +92,6 @@ ifeq ($(TARGET_BOARD_PLATFORM), tegra)
 endif
 ifeq ($(TARGET_BOARD_PLATFORM), tegra3)
 	LOCAL_CFLAGS += -DDONT_USE_FENCE_SYNC
-endif
-
-ifeq ($(TARGET_NO_SENSOR_PERMISSION_CHECK),true)
-LOCAL_CPPFLAGS += -DNO_SENSOR_PERMISSION_CHECK
 endif
 
 include $(BUILD_SHARED_LIBRARY)

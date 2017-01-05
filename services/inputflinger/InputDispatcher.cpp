@@ -20,28 +20,28 @@
 //#define LOG_NDEBUG 0
 
 // Log detailed debug messages about each inbound event notification to the dispatcher.
-#define DEBUG_INBOUND_EVENT_DETAILS 0
+// #define DEBUG_INBOUND_EVENT_DETAILS 0
 
 // Log detailed debug messages about each outbound event processed by the dispatcher.
-#define DEBUG_OUTBOUND_EVENT_DETAILS 0
+// #define DEBUG_OUTBOUND_EVENT_DETAILS 0
 
 // Log debug messages about the dispatch cycle.
-#define DEBUG_DISPATCH_CYCLE 0
+// #define DEBUG_DISPATCH_CYCLE 0
 
 // Log debug messages about registrations.
-#define DEBUG_REGISTRATION 0
+// #define DEBUG_REGISTRATION 0
 
 // Log debug messages about input event injection.
-#define DEBUG_INJECTION 0
+// #define DEBUG_INJECTION 0
 
 // Log debug messages about input focus tracking.
-#define DEBUG_FOCUS 0
+// #define DEBUG_FOCUS 0
 
 // Log debug messages about the app switch latency optimization.
-#define DEBUG_APP_SWITCH 0
+// #define DEBUG_APP_SWITCH 0
 
 // Log debug messages about hover events.
-#define DEBUG_HOVER 0
+// #define DEBUG_HOVER 0
 
 #include "InputDispatcher.h"
 
@@ -134,7 +134,7 @@ static bool isValidMotionAction(int32_t action, int32_t actionButton, int32_t po
     case AMOTION_EVENT_ACTION_POINTER_DOWN:
     case AMOTION_EVENT_ACTION_POINTER_UP: {
         int32_t index = getMotionEventActionPointerIndex(action);
-        return index >= 0 && size_t(index) < pointerCount;
+        return index >= 0 && index < pointerCount;
     }
     case AMOTION_EVENT_ACTION_BUTTON_PRESS:
     case AMOTION_EVENT_ACTION_BUTTON_RELEASE:
@@ -902,7 +902,7 @@ void InputDispatcher::logOutboundMotionDetailsLocked(const char* prefix, const M
         ALOGD("  Pointer %d: id=%d, toolType=%d, "
                 "x=%f, y=%f, pressure=%f, size=%f, "
                 "touchMajor=%f, touchMinor=%f, toolMajor=%f, toolMinor=%f, "
-                "orientation=%f",
+                "orientation=%f, relativeX=%f, relativeY=%f",
                 i, entry->pointerProperties[i].id,
                 entry->pointerProperties[i].toolType,
                 entry->pointerCoords[i].getAxisValue(AMOTION_EVENT_AXIS_X),
@@ -913,7 +913,9 @@ void InputDispatcher::logOutboundMotionDetailsLocked(const char* prefix, const M
                 entry->pointerCoords[i].getAxisValue(AMOTION_EVENT_AXIS_TOUCH_MINOR),
                 entry->pointerCoords[i].getAxisValue(AMOTION_EVENT_AXIS_TOOL_MAJOR),
                 entry->pointerCoords[i].getAxisValue(AMOTION_EVENT_AXIS_TOOL_MINOR),
-                entry->pointerCoords[i].getAxisValue(AMOTION_EVENT_AXIS_ORIENTATION));
+                entry->pointerCoords[i].getAxisValue(AMOTION_EVENT_AXIS_ORIENTATION),
+                entry->pointerCoords[i].getAxisValue(AMOTION_EVENT_AXIS_RELATIVE_X),
+                entry->pointerCoords[i].getAxisValue(AMOTION_EVENT_AXIS_RELATIVE_Y));
     }
 #endif
 }
